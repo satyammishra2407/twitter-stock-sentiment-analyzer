@@ -4,12 +4,18 @@ from textblob import TextBlob
 import matplotlib.pyplot as plt
 from collections import Counter
 import pandas as pd
-from dotenv import load_dotenv
 import os
 
-load_dotenv()  # Load environment variables from .env
-BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
-print("✅ Token loaded...")
+# ✅ Smart token loading (local + Streamlit Cloud)
+try:
+    import streamlit as st
+    BEARER_TOKEN = st.secrets["TWITTER_BEARER_TOKEN"]
+    print("🔐 Token loaded from Streamlit secrets.")
+except Exception:
+    from dotenv import load_dotenv
+    load_dotenv()
+    BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
+    print("🔐 Token loaded from .env")
 
 # ✅ Sentiment Analysis Function
 def analyze_sentiment(text):
@@ -49,7 +55,6 @@ def save_to_csv(tweets, filename):
     df["sentiment"] = df["text"].apply(analyze_sentiment)
     df.to_csv(filename, index=False, encoding="utf-8")
     print(f"✅ Saved {len(df)} unique tweets to '{filename}'")
-
     return df
 
 # ✅ Plot Sentiment Graph
@@ -68,7 +73,7 @@ def plot_sentiment_distribution(df, keyword):
     plt.show()
     print("📊 Graph saved as 'sentiment_graph.png' and displayed.")
 
-# ✅ Main
+# ✅ Main (optional: only used when running locally as CLI)
 print("📂 File loaded...")
 if __name__ == "__main__":
     print("🔥 Sentiment Analyzer Script")
