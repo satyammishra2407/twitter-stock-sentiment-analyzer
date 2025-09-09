@@ -5,17 +5,24 @@ import matplotlib.pyplot as plt
 from collections import Counter
 import pandas as pd
 import os
+import time
+import random
 
 # ✅ Smart token loading (local + Streamlit Cloud)
 try:
     import streamlit as st
-    BEARER_TOKEN = st.secrets["TWITTER_BEARER_TOKEN"]
-    print("🔐 Token loaded from Streamlit secrets.")
+    BEARER_TOKENS = st.secrets["TWITTER_BEARER_TOKENS"].split(",")
+    print("🔐 Tokens loaded from Streamlit secrets.")
 except Exception:
     from dotenv import load_dotenv
     load_dotenv()
-    BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN")
-    print("🔐 Token loaded from .env")
+    BEARER_TOKENS = os.getenv("TWITTER_BEARER_TOKENS", "").split(",")
+    print("🔐 Tokens loaded from .env")
+
+# Remove any empty tokens
+BEARER_TOKENS = [token.strip() for token in BEARER_TOKENS if token.strip()]
+current_token_index = 0
+token_cooldown = {}  # Track when tokens can be used again
 
 # ✅ Sentiment Analysis Function
 def analyze_sentiment(text):
@@ -28,12 +35,39 @@ def analyze_sentiment(text):
     else:
         return "Negative"
 
-# ✅ Fetch Tweets from Twitter API
+# ✅ Get current active token
+def get_current_token():
+    global current_token_index
+    
+    # Check if current token is in cooldown
+    current_token = BEARER_TOKENS[current_token_index]
+    if current_token in token_cooldown and token_cooldown[current_token] > time.time():
+        # Find next available token
+        for i in range(len(BEARER_TOKENS)):
+            next_index = (current_token_index + i) % len(BEARER_TOKENS)
+            next_token = BEARER_TOKENS[next_index]
+            if next_token not in token_cooldown or token_cooldown[next_token] <= time.time():
+                current_token_index = next_index
+                return next_token
+        
+        # If all tokens are in cooldown, use the one with shortest cooldown
+        soonest_token = min(token_cooldown.keys(), key=lambda k: token_cooldown[k])
+        return soonest_token
+    
+    return current_token
+
+# ✅ Fetch Tweets from Twitter API with token rotation
 def get_tweets(query, max_results=50):
+    global current_token_index  # Yahan global declare karo
     print("📡 Fetching tweets...")
     url = "https://api.twitter.com/2/tweets/search/recent"
+    
+    # Get current token
+    bearer_token = get_current_token()
+    print(f"Using token index: {current_token_index}")
+    
     headers = {
-        "Authorization": f"Bearer {BEARER_TOKEN}"
+        "Authorization": f"Bearer {bearer_token}"
     }
     params = {
         "query": f"{query} lang:en -is:retweet",
@@ -41,11 +75,32 @@ def get_tweets(query, max_results=50):
         "tweet.fields": "created_at,text,lang"
     }
 
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code != 200:
-        raise Exception(f"❌ Twitter API error: {response.status_code} - {response.text}")
+    try:
+        response = requests.get(url, headers=headers, params=params)
+        
+        # Check for rate limit
+        if response.status_code == 429:
+            print(f"❌ Rate limit hit for token {current_token_index}")
+            # Set cooldown for this token (15 minutes)
+            token_cooldown[bearer_token] = time.time() + 900  # 15 minutes
+            raise Exception(f"❌ Twitter API rate limit reached. Token {current_token_index} on cooldown.")
+        
+        if response.status_code != 200:
+            raise Exception(f"❌ Twitter API error: {response.status_code} - {response.text}")
 
-    return response.json().get("data", [])
+        return response.json().get("data", [])
+    
+    except Exception as e:
+        if "rate limit" in str(e).lower():
+            # Rotate to next token
+            current_token_index = (current_token_index + 1) % len(BEARER_TOKENS)
+            print(f"Rotating to token index: {current_token_index}")
+            
+            # Try again with new token after short delay
+            time.sleep(1)
+            return get_tweets(query, max_results)
+        else:
+            raise e
 
 # ✅ Save to CSV and Remove Duplicates
 def save_to_csv(tweets, filename):
@@ -70,13 +125,14 @@ def plot_sentiment_distribution(df, keyword):
     plt.xticks(rotation=0)
     plt.tight_layout()
     plt.savefig("sentiment_graph.png")
-    plt.show()
-    print("📊 Graph saved as 'sentiment_graph.png' and displayed.")
+    plt.close()  # Close to prevent memory issues
+    print("📊 Graph saved as 'sentiment_graph.png'")
 
 # ✅ Main (optional: only used when running locally as CLI)
 print("📂 File loaded...")
 if __name__ == "__main__":
     print("🔥 Sentiment Analyzer Script")
+    print(f"Available tokens: {len(BEARER_TOKENS)}")
     try:
         keyword = input("🔍 Enter a keyword to search on Twitter: ")
         tweet_limit = int(input("🔢 How many tweets to analyze (max 100): "))
