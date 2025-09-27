@@ -1,4 +1,4 @@
-# live_dashboard.py
+# live_dashboard.py file
 import streamlit as st
 from utils import get_stock_data
 import yfinance as yf
